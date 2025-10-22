@@ -1,0 +1,35 @@
+// Import the functions you need from the SDKs you need
+importScripts("https://www.gstatic.com/firebasejs/12.3.0/firebase-app-compat.js");
+importScripts("https://www.gstatic.com/firebasejs/12.3.0/firebase-messaging-compat.js");
+
+// Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+    apiKey: "AIzaSyArrnKp3JfRV9HfdkGsfwIbu57YvsRStew",
+    authDomain: "mamm-alerts.firebaseapp.com",
+    projectId: "mamm-alerts",
+    storageBucket: "mamm-alerts.firebasestorage.app",
+    messagingSenderId: "812376016079",
+    appId: "1:812376016079:web:62e9c74cba6c13ac47a3ba",
+    measurementId: "G-FZH66DH45K"
+};
+
+// Initialize Firebase
+firebase.initializeApp(firebaseConfig);
+const messaging = firebase.messaging();
+
+messaging.onBackgroundMessage((payload) => {
+    console.log(
+        '[firebase-messaging-sw.js] Received background message ',
+        payload
+    );
+    
+    // Customize notification here
+    const notificationTitle = payload.data["title"];
+    const notificationOptions = {
+        body: payload.data["body"],
+        icon: 'web/icon-512.png',
+    };
+
+    self.registration.showNotification(notificationTitle, notificationOptions);
+});

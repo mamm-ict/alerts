@@ -1,0 +1,10 @@
+{
+    "server": "http://192.168.68.5:8001",
+    "subscriptions": [
+        "AMA",
+        "BRA",
+        "MOT",
+        "BTP",
+        "FRA"
+    ]
+}
