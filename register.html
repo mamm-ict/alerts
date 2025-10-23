@@ -15,6 +15,12 @@
                 return;
             }
 
+            console.log(server + "/subscribe");
+            console.log(JSON.stringify({
+                "token": token,
+                "topic": topic,
+            }));
+
             let res = await fetch(server + "/subscribe", {
                 "method": "POST",
                 "body": JSON.stringify({
