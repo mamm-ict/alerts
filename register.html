@@ -66,7 +66,7 @@
                         btn.innerText = topic;
 
                         btn.addEventListener(
-                            "click", async (server) => {
+                            "click", async () => {
                                 let res = await subToTopic(server, topic);
                             }
                         );
