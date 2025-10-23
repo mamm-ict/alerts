@@ -1,5 +1,5 @@
 {
-    "server": "http://192.168.68.5:8001",
+    "server": "https://192.168.88.5",
     "subscriptions": [
         "AMA",
         "BRA",
