@@ -23,7 +23,7 @@ messaging.onBackgroundMessage((payload) => {
         '[firebase-messaging-sw.js] Received background message ',
         payload
     );
-   
+
     // Send PayLoad to open tabs to store data
     clients.matchAll({ type: "window", includeUncontrolled: true }).then(clientList => {
         for (const client of clientList) {
@@ -44,9 +44,38 @@ messaging.onBackgroundMessage((payload) => {
                 const notificationOptions = {
                     body: payload.data["body"],
                     icon: notificationIcon,
+                    data: {
+                        url: "/history"
+                    }
                 };
 
     self.registration.showNotification(notificationTitle, notificationOptions);
                 console.log(payload.data)
 });
 
+self.addEventListener('notificationclick', (event) => {
+    event.notification.close();
+
+    // Check existing tab to focus on
+    event.waitUntil(
+        clients
+            // https://developer.mozilla.org/en-US/docs/Web/API/Clients/matchAll
+            .matchAll({ type: 'window', includeUncontrolled: true })
+            .then(function (clientList) {
+                const url = event.notification.data.url;
+                if (!url) return;
+
+                // Focus on existing tab
+                for (const client of clientList) {
+                    console.log(client.url + ":" + url);
+                    if (client.url.includes(url) && 'focus' in client) {
+                        return client.focus();
+                    }
+                }
+
+                if (clients.openWindow) {
+                    return clients.openWindow(url);
+                }
+            })
+    );
+});
