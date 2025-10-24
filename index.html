@@ -69,20 +69,48 @@
 
             onMessage(messaging, (payload) => {
                 console.log(
-                    '[firebase-messaging-sw.js] Received message ',
+                    'Received message ',
                     payload
                 );
-
-                console.log(payload.data.title);
 
                 // Customize notification here
                 const notificationTitle = payload.data["title"];
                 const notificationOptions = {
                     body: payload.data["body"],
                     icon: 'web/icon-512.png',
+                    data: {
+                        url: "/history"
+                    }
                 };
 
                 worker.showNotification(notificationTitle, notificationOptions);
+            });
+
+            worker.addEventListener('notificationclick', (event) => {
+                event.notification.close();
+
+                // Check existing tab to focus on
+                event.waitUntil(
+                    clients
+                        // https://developer.mozilla.org/en-US/docs/Web/API/Clients/matchAll
+                        .matchAll({ type: 'window', includeUncontrolled: true })
+                        .then(function (clientList) {
+                            const url = event.notification.data.url;
+
+                            if (!url) return;
+
+                            // Focus on existing tab
+                            for (const client of clientList) {
+                                if (client.url.includes(url) && 'focus' in client) {
+                                    return client.focus();
+                                }
+                            }
+
+                            if (clients.openWindow) {
+                                return clients.openWindow(url);
+                            }
+                        })
+                );
             });
 
             return id;
