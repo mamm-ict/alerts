@@ -52,12 +52,14 @@
         let setupWorker = async () => {
             if ("serviceWorker" in navigator) {
                 let worker = await navigator.serviceWorker.register("firebase-messaging-sw.js");
+
                 return worker;
             } else {
                 return null;
             }
         }
 
+        // function 
         let setupFCM = async (worker) => {
             let id = await getToken(
                 messaging,
@@ -77,12 +79,24 @@
 
                 // Customize notification here
                 const notificationTitle = payload.data["title"];
+
+                let notificationIcon = '';
+                if(payload.data["type"].toLowerCase() == "up"){
+                    notificationIcon = 'web/good.png' ;
+                }
+                else{
+                    notificationIcon = 'web/failure.png';
+                }
+                console.log(payload.data["type"]);
+
                 const notificationOptions = {
                     body: payload.data["body"],
-                    icon: 'web/icon-512.png',
+                    icon: notificationIcon,
                 };
 
                 worker.showNotification(notificationTitle, notificationOptions);
+                console.log(payload.data)
+                // localStorage.setItem(payload.data, JSON.stringify(payload.data))
             });
 
             return id;

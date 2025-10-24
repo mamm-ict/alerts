@@ -23,13 +23,30 @@ messaging.onBackgroundMessage((payload) => {
         '[firebase-messaging-sw.js] Received background message ',
         payload
     );
-    
+   
+    // Send PayLoad to open tabs to store data
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then(clientList => {
+        for (const client of clientList) {
+        client.postMessage(payload.data);
+        }
+    });
+
     // Customize notification here
     const notificationTitle = payload.data["title"];
-    const notificationOptions = {
-        body: payload.data["body"],
-        icon: 'web/icon-512.png',
-    };
+    let notificationIcon = '';
+                if(payload.data["type"].toLowerCase() == "up"){
+                    notificationIcon = 'web/good.png' ;
+                }
+                else{
+                    notificationIcon = 'web/failure.png';
+                }
+                
+                const notificationOptions = {
+                    body: payload.data["body"],
+                    icon: notificationIcon,
+                };
 
     self.registration.showNotification(notificationTitle, notificationOptions);
+                console.log(payload.data)
 });
+
