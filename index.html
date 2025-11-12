@@ -4,7 +4,7 @@
 <head>
     <title>MAMM Alert</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" type="image/x-icon" href="./web/favicon.ico">
+    <link rel="icon" type="image/x-icon" href="/alerts/web/favicon.ico">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="./localforage.min.js"></script>
     <script type="module">
@@ -14,6 +14,7 @@
         // TODO: Add SDKs for Firebase products that you want to use
         // https://firebase.google.com/docs/web/setup#available-libraries
         import { getMessaging, getToken, onMessage } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-messaging.js";
+        import { getFirestore, setDoc, doc } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js";
 
         // Your web app's Firebase configuration
         // For Firebase JS SDK v7.20.0 and later, measurementId is optional
@@ -31,6 +32,7 @@
         const app = initializeApp(firebaseConfig);
         const analytics = getAnalytics(app);
         const messaging = getMessaging(app);
+        const db = getFirestore(app);
 
         let token = "";
         let server = "";
@@ -42,7 +44,7 @@
 
             let result = await Notification.requestPermission();
 
-            if (result === 'granted') {
+            if (result === "granted") {
                 location.reload();
             } else {
                 return false;
@@ -149,9 +151,22 @@
                     document.querySelector("#prompt").style.display = "none";
                     document.querySelector("#notification-id").value = token;
                     document.querySelector("#copy-button").removeAttribute("disabled");
+                    document.querySelector("#save-button").addEventListener(
+                        "click", () => saveToDB(token)
+                    );
+                    document.querySelector("#save-button").removeAttribute("disabled");
                 }
             }
         }
+
+        let saveToDB = async (token) => {
+            await setDoc(doc(db, "tokens", token), {
+                created: Date.now().toLocaleString()
+            })
+
+            alert('Notification ID saved!');
+            document.querySelector("#save-button").setAttribute("disabled", true);
+        };
 
         setup();
     </script>
@@ -189,16 +204,19 @@
         </div>
     </div>
 
-    <div class="card p-4 text-center">
+    <div class="card p-4 text-center col-md-6 m-2">
         <h4 class="notification-text mb-3">Notification ID</h4>
 
-        <input type="text" id="notification-id" class="form-control text-center mb-3"
+        <div class="d-flex justify-content-between gap-1">
+            <input type="text" id="notification-id" class="form-control text-center mb-3 flex-grow-1"
             placeholder="Please wait for the token to generate" readonly>
+            <button class="btn btn-secondary mb-3 flex-shrink-1" id="copy-button" disabled>Copy</button>
+        </div>
 
-        <button class="btn btn-primary w-100 mb-3" id="copy-button" disabled>Copy</button>
+        <button class="btn btn-primary w-100 mb-3" id="save-button" disabled>Save</button>
 
         <p class="text-muted small mb-0">
-            Copy your token and send it to the registration site to complete your setup.
+            Use your token on the <a target="_blank" rel="noopener noreferrer" href="/alerts/register">registration site</a> to complete your setup.
         </p>
     </div>
 
