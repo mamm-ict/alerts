@@ -159,16 +159,12 @@
         }
 
         let saveToDB = async (token) => {
-            const ref = await setDoc(doc(db, "tokens", token), {
+            await setDoc(doc(db, "tokens", token), {
                 created: Date.now().toLocaleString()
-            });
+            })
 
-            console.log(ref);
-
-            if (ref) {
-                alert('Notification ID saved!');
-                document.querySelector("#save-button").setAttribute("disabled", true);
-            }
+            alert('Notification ID saved!');
+            document.querySelector("#save-button").setAttribute("disabled", true);
         };
 
         setup();
