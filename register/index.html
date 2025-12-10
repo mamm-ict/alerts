@@ -77,17 +77,51 @@
             let res = await getDocs(collection(db, "tokens"));
             console.log(res);
 
+            // Converter untuk apa saja format created yang pelik
+            const convertCreated = (val) => {
+                if (!val) return 0;
+
+                // already timestamp number
+                if (typeof val === "number") return val;
+
+                // Firestore Timestamp
+                if (val?.toMillis) return val.toMillis();
+
+                // ISO / normal date string
+                const p = Date.parse(val);
+                if (!isNaN(p)) return p;
+
+                // fallback untuk local format pelik (example: 12/10/2025, 10:40 PM)
+                const parts = val.split(/[\s/,:]+/);
+                if (parts.length >= 3) {
+                    let [d, m, y] = parts.map(Number);
+                    if (y < 100) y += 2000;
+                    return new Date(y, m - 1, d).getTime();
+                }
+
+                return 0; // last fallback
+            };
+
             let tokens = [];
 
-            res.forEach(
-                (doc) => {
-                    console.log(doc.id);
-                    tokens.push(doc.id);
-                }
-            );
+            res.forEach((doc) => {
+                const data = doc.data();
+                tokens.push({
+                    id: doc.id,
+                    created: convertCreated(data.created)
+                });
+            });
 
-            return tokens;
+            // SORT ikut created (latest atas)
+            tokens.sort((a, b) => b.created - a.created);
+            const latestCreated = tokens[0]?.created ?? 0;
+
+            // Return hanya ID untuk dropdown
+            // return tokens.map(t => t.id);
+
+            return tokens
         }
+
 
         let setup = async () => {
             const data = await getSubList();
@@ -130,28 +164,46 @@
 
                     document.querySelector("#selector").removeAttribute("disabled");
 
-                    tokens.forEach(
-                        (token) => {
-                            let li = document.createElement("li");
-                            let a = document.createElement("button");
-                            a.classList.add("dropdown-item");
-                            a.classList.add("text-truncate");
-                            // a.href = "#";
-                            a.innerText = token;
-                            li.appendChild(a);
-                            li.classList.add("px-2");
-                            li.classList.add("w-100");
-                            
-                            li.addEventListener(
-                                "click",
-                                () => {
-                                    tokenSelect(token);
-                                }
-                            );
+                    const latestCreated = tokens[0]?.created ?? 0;
 
-                            tokenList.appendChild(li);
-                        }
-                    );
+                    tokens.forEach(t => {
+    let li = document.createElement("li");
+    let a = document.createElement("button");
+
+    a.classList.add("dropdown-item", "text-truncate");
+
+    // NEW?
+    const isNew = t.created === latestCreated;
+
+    // SHORT DISPLAY ONLY
+    const short = shortenToken(t.id);
+
+    // UI LABEL
+    if (isNew) {
+        a.innerHTML = `<span style="
+            color:#ff3b3b;
+            font-weight:bold;
+            text-shadow:0 0 6px rgba(255,50,50,.8);
+        ">[NEW]</span> ${short}`;
+    } else {
+        a.innerHTML = short;
+    }
+
+    // Tooltip hover show full token
+    a.title = t.id;
+
+    li.appendChild(a);
+    li.classList.add("px-2", "w-100");
+
+    li.addEventListener("click", () => {
+        tokenSelect(t.id); // still send FULL token
+    });
+
+    tokenList.appendChild(li);
+});
+
+
+
                 }
             }
         }
@@ -160,6 +212,14 @@
             let input = document.querySelector("#token-input");
             input.value = val;
         }
+function shortenToken(t) {
+    if (!t) return "";
+    if (t.length <= 25) return t; // kalau token sangat pendek
+
+    const start = t.substring(0, 10);       // ambil 10 depan
+    const end = t.substring(t.length - 6);  // ambil 6 belakang
+    return `${start}...${end}`;
+}
 
         setup();
     </script>
@@ -175,6 +235,13 @@
         #sub-list {
             margin-top: 20px;
         }
+
+        #tokens {
+            max-height: 200px;
+            /* cukup untuk 5 item */
+            overflow-y: auto;
+            /* enable scroll */
+        }
     </style>
 </head>
 
@@ -184,17 +251,18 @@
 
         <div class="input-group mb-3 d-flex flex-column justify-content-between gap-2">
             <div class="dropdown">
-                <button id="selector" class="btn btn-secondary dropdown-toggle w-100" type="button" data-bs-toggle="dropdown"
-                    aria-expanded="false" disabled>
+                <button id="selector" class="btn btn-secondary dropdown-toggle w-100" type="button"
+                    data-bs-toggle="dropdown" aria-expanded="false" disabled>
                     Select Token
                 </button>
                 <ul class="dropdown-menu w-100" id="tokens">
                     <!-- TOKEN LIST GOES HERE -->
+
                 </ul>
             </div>
             <div class="d-flex justify-content-between gap-1">
-                <input type="text" id="token-input" class="form-control w-100 rounded" placeholder="Enter Notification Token"
-                    aria-label="Enter Notification Token">
+                <input type="text" id="token-input" class="form-control w-100 rounded"
+                    placeholder="Enter Notification Token" aria-label="Enter Notification Token">
                 <button class="btn btn-danger flex-shrink-1" id="clear-button">CLEAR</button>
             </div>
         </div>

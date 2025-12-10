@@ -48,7 +48,7 @@ messaging.onBackgroundMessage(async (payload) => {
         body: payload.data["body"],
         icon: notificationIcon,
         data: {
-            url: "/history"
+            url: "/alerts/history"
         }
     };
 
