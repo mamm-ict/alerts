@@ -15,6 +15,71 @@
         // https://firebase.google.com/docs/web/setup#available-libraries
         import { getMessaging, getToken, onMessage } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-messaging.js";
         import { getFirestore, setDoc, doc } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js";
+        import { getDoc } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js";
+
+
+        let credentialId = null;   // 🔥 GLOBAL — boleh pakai di saveToDB()
+
+        // ---- Helper: Convert ArrayBuffer → Base64URL ----
+        function arrayBufferToBase64url(buffer) {
+            let binary = '';
+            const bytes = new Uint8Array(buffer);
+            for (let i = 0; i < bytes.byteLength; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+        }
+
+        // ---- Create device-bound key using WebAuthn ----
+        async function createDeviceKey() {
+            try {
+                const challenge = new Uint8Array(32);
+                crypto.getRandomValues(challenge);
+
+                const publicKey = {
+                    challenge,
+                    rp: { name: "MAMM Alerts" },
+                    user: {
+                        id: new Uint8Array(16),
+                        name: "device",
+                        displayName: "device",
+                    },
+                    pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+                    authenticatorSelection: {
+                        authenticatorAttachment: "platform",
+                        residentKey: "preferred",
+                        userVerification: "preferred",
+                    }
+                };
+
+                const cred = await navigator.credentials.create({ publicKey });
+                return arrayBufferToBase64url(cred.rawId);
+
+            } catch (err) {
+                console.log("WebAuthn unavailable → fallback UUID");
+                return "device-" + crypto.randomUUID();
+            }
+        }
+
+
+        // ---- Bind device ID + FCM token to Firestore ----
+        async function bindDevice(token, db) {
+            credentialId = await localforage.getItem("deviceId");
+
+            if (!credentialId) {
+                credentialId = await createDeviceKey();
+                await localforage.setItem("deviceId", credentialId);
+            }
+
+            const docRef = doc(db, "devices", credentialId);
+
+            await setDoc(docRef, {
+                token,
+                updatedAt: new Date().toISOString()
+            });
+
+            console.log("Device bound:", credentialId);
+        }
 
         // Your web app's Firebase configuration
         // For Firebase JS SDK v7.20.0 and later, measurementId is optional
@@ -71,37 +136,58 @@
                 }
             );
 
-            onMessage(messaging, (payload) => {
-                console.log(
-                    'Received message ',
-                    payload
-                );
 
-                // Customize notification here
+            onMessage(messaging, async (payload) => {
+                console.log("Received message", payload);
+
+                const machine = payload.data["machine"];   // assume payload ada machine field
+                const token = await getToken(messaging);    // token currently used
+
+                // --- CHECK user subscription in Firestore ---
+                const ref = doc(db, "subscriptions", token);
+                const snap = await getDoc(ref);
+                let subs = [];
+
+                if (snap.exists()) {
+                    subs = snap.data().topics || [];
+                }
+
+                console.log("User subscribed topics:", subs);
+
+                // --- IF user NOT subscribed → DO NOT SAVE ---
+                if (!subs.includes(machine)) {
+                    console.warn("User NOT subscribed to this machine → not saving history");
+                    return;
+                }
+
+                // --- User is subscribed → continue showing notification ---
                 const notificationTitle = payload.data["title"];
 
-                let notificationIcon = '';
-                if(payload.data["type"].toLowerCase() == "up"){
-                    notificationIcon = 'web/good.png' ;
+                let notificationIcon = "";
+                if (payload.data["type"]?.toLowerCase() === "up") {
+                    notificationIcon = "web/good.png";
+                } else {
+                    notificationIcon = "web/failure.png";
                 }
-                else{
-                    notificationIcon = 'web/failure.png';
-                }
-                console.log(payload.data["type"]);
 
                 const notificationOptions = {
                     body: payload.data["body"],
                     icon: notificationIcon,
-                    data: {
-                        url: "../history"
-                    }
+                    data: { url: "../history" }
                 };
 
                 worker.showNotification(notificationTitle, notificationOptions);
-                console.log(payload.data)
-                localforage.setItem("Information-History", payload.data);
 
+                // --- SAVE to history ---
+                let existing = await localforage.getItem("Information-History");
+                if (!Array.isArray(existing)) existing = [];
+
+                existing.push(payload.data);
+                await localforage.setItem("Information-History", existing);
+
+                console.log("Saved to history:", payload.data);
             });
+
 
             worker.addEventListener('notificationclick', (event) => {
                 event.notification.close();
@@ -155,12 +241,19 @@
                         "click", () => saveToDB(token)
                     );
                     document.querySelector("#save-button").removeAttribute("disabled");
+
+                    // Bind token with device ID
+                    await bindDevice(token, db);
+                } else {
+                    alert("Failed to get notification token.");
+
                 }
             }
         }
 
         let saveToDB = async (token) => {
             await setDoc(doc(db, "tokens", token), {
+                deviceId: credentialId,
                 created: new Date().toLocaleString()
             })
 
@@ -209,14 +302,15 @@
 
         <div class="d-flex justify-content-between gap-1">
             <input type="text" id="notification-id" class="form-control text-center mb-3 flex-grow-1"
-            placeholder="Please wait for the token to generate" readonly>
+                placeholder="Please wait for the token to generate" readonly>
             <button class="btn btn-secondary mb-3 flex-shrink-1" id="copy-button" disabled>Copy</button>
         </div>
 
         <button class="btn btn-primary w-100 mb-3" id="save-button" disabled>Save Token</button>
 
         <p class="text-muted small mb-0">
-            Use your token on the <a target="_blank" rel="noopener noreferrer" href="./register">registration site</a> to complete your setup.
+            Use your token on the <a target="_blank" rel="noopener noreferrer" href="./register">registration site</a>
+            to complete your setup.
         </p>
     </div>
 

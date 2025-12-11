@@ -6,6 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/x-icon" href="/web/favicon.ico">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="../localforage.min.js"></script>
+
     <script type="module">
         // Import the functions you need from the SDKs you need
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js";
@@ -30,6 +32,8 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
+        let credentialId = null;
+
         let subToTopic = async (server, topic) => {
             let token = document.querySelector("#token-input").value;
 
@@ -42,6 +46,7 @@
             console.log(JSON.stringify({
                 "token": token,
                 "topic": topic,
+                "deviceID": credentialId
             }));
 
             let res = await fetch(server + "/subscribe", {
@@ -54,6 +59,7 @@
             });
 
             if (res.status == 200) {
+                await addSubscription(token, topic);
                 alert("Subscribed to " + topic);
             } else {
                 alert("Failed to subscribe");
@@ -73,153 +79,274 @@
             return json;
         }
 
+        // ---------- DEBUG HELPERS ----------
+        function debugLog(...args) {
+            // use console.debug so it's easy to filter
+            console.debug("[DBG]", ...args);
+        }
+
+        // ---------- robust getTokenList with debug ----------
         let getTokenList = async () => {
-            let res = await getDocs(collection(db, "tokens"));
-            console.log(res);
+            try {
+                debugLog("getTokenList() start");
 
-            // Converter untuk apa saja format created yang pelik
-            const convertCreated = (val) => {
-                if (!val) return 0;
+                // sanity checks
+                debugLog("window.localforage exists:", !!window.localforage);
+                debugLog("db exists:", !!db);
 
-                // already timestamp number
-                if (typeof val === "number") return val;
+                // get device id from localforage
+                credentialId = await localforage.getItem("deviceId");
+                debugLog("credentialId from localforage:", credentialId);
 
-                // Firestore Timestamp
-                if (val?.toMillis) return val.toMillis();
-
-                // ISO / normal date string
-                const p = Date.parse(val);
-                if (!isNaN(p)) return p;
-
-                // fallback untuk local format pelik (example: 12/10/2025, 10:40 PM)
-                const parts = val.split(/[\s/,:]+/);
-                if (parts.length >= 3) {
-                    let [d, m, y] = parts.map(Number);
-                    if (y < 100) y += 2000;
-                    return new Date(y, m - 1, d).getTime();
+                if (!credentialId) {
+                    debugLog("No deviceId in localforage -> returning empty list");
+                    return [];
                 }
 
-                return 0; // last fallback
-            };
+                // fetch tokens collection
+                const colRef = collection(db, "tokens");
+                debugLog("Querying collection:", colRef);
+                const res = await getDocs(colRef);
 
-            let tokens = [];
+                debugLog("getDocs returned, docCount =", res.size ?? "unknown");
 
-            res.forEach((doc) => {
-                const data = doc.data();
-                tokens.push({
-                    id: doc.id,
-                    created: convertCreated(data.created)
+                const convertCreated = (val) => {
+                    if (!val) return 0;
+                    if (typeof val === "number") return val;
+                    if (val?.toMillis) return val.toMillis();
+                    const p = Date.parse(val);
+                    if (!isNaN(p)) return p;
+                    return 0;
+                };
+
+                let tokens = [];
+
+                res.forEach((docSnap) => {
+                    const id = docSnap.id;
+                    const data = docSnap.data();
+                    debugLog("doc:", id, data);
+
+                    // ONLY show tokens for this device
+                    if (data.deviceId !== credentialId) {
+                        debugLog("skip (deviceId mismatch):", id, "doc.deviceId=", data.deviceId);
+                        return;
+                    }
+
+                    tokens.push({
+                        id,
+                        created: convertCreated(data.created),
+                        deviceId: data.deviceId
+                    });
                 });
+
+                tokens.sort((a, b) => b.created - a.created);
+
+                debugLog("getTokenList() returning tokens:", tokens);
+                return tokens;
+            } catch (err) {
+                console.error("[ERR] getTokenList error:", err);
+                return [];
+            }
+        };
+
+        // ---------- robust setup with debug ----------
+        let setup = async () => {
+            try {
+                debugLog("setup() start");
+
+                // check localforage lib
+                debugLog("localforage type:", typeof localforage);
+                if (!window.localforage) {
+                    console.error("[ERR] localforage NOT loaded (window.localforage falsy)");
+                }
+
+                // check firebase firestore objects
+                debugLog("firebase db object:", db ? "ok" : "missing");
+
+                // check DOM elements exist
+                debugLog("DOM tokens element:", !!document.querySelector("#tokens"));
+                debugLog("DOM selector button:", !!document.querySelector("#selector"));
+
+                // ensure deviceId exists (if not, generate and store for quick test)
+                let localDeviceId = await localforage.getItem("deviceId");
+                debugLog("initial localDeviceId:", localDeviceId);
+
+                if (!localDeviceId) {
+                    // TEMP: create a predictable test id for debugging (remove later if you want real flow)
+                    localDeviceId = "nb1-debug-" + Math.random().toString(36).slice(2, 8);
+                    await localforage.setItem("deviceId", localDeviceId);
+                    debugLog("generated+stored test deviceId:", localDeviceId);
+                }
+
+                // load UI data
+                const data = await getSubList();
+                debugLog("config.json data:", data);
+
+                const tokens = await getTokenList();
+                debugLog("tokens fetched in setup:", tokens);
+
+                // render subscribe buttons
+                let list = document.querySelector("#subscribe-list");
+                if (list) list.style.display = "flex";
+
+                if (data && Array.isArray(data.subscriptions)) {
+                    const server = data.server;
+                    data.subscriptions.forEach((topic) => {
+                        let div = document.createElement("div");
+                        let btn = document.createElement("button");
+                        btn.classList.add("btn", "p-3", "btn-primary", "w-100");
+                        div.classList.add("col-md-4", "col-12", "p-1");
+                        btn.innerText = topic;
+                        btn.addEventListener("click", async () => {
+                            let token = document.querySelector("#token-input").value;
+                            if (!token) {
+                                alert("Select a token first!");
+                                return;
+                            }
+
+                            let subs = await getSubscriptions(token);
+
+                            // Already subscribed? Disable.
+                            if (subs.includes(topic)) {
+                                alert("Already subscribed.");
+                                return;
+                            }
+
+                            let res = await subToTopic(server, topic);
+                            if (res) {
+                                // visually mark
+                                btn.classList.remove("btn-primary");
+                                btn.classList.add("btn-success");
+                                btn.innerHTML = topic + " &#10003;";
+                                btn.disabled = true;
+                            }
+                        });
+                        div.appendChild(btn);
+                        list.appendChild(div);
+                    });
+                } else {
+                    debugLog("No subscriptions array in config.json or config.json not loaded");
+                }
+
+                // render tokens dropdown
+                if (!tokens || tokens.length === 0) {
+                    debugLog("No tokens to render");
+                    // make sure selector is disabled
+                    document.querySelector("#selector")?.setAttribute("disabled", "disabled");
+                    return;
+                }
+
+                let tokenList = document.querySelector("#tokens");
+                tokenList.innerHTML = "";
+                document.querySelector("#selector")?.removeAttribute("disabled");
+
+                const latestCreated = tokens[0]?.created ?? 0;
+
+                tokens.forEach(t => {
+                    let li = document.createElement("li");
+                    let a = document.createElement("button");
+
+                    a.classList.add("dropdown-item", "text-truncate");
+
+                    const isNew = t.created === latestCreated;
+                    const short = shortenToken(t.id);
+
+                    if (isNew) {
+                        a.innerHTML = `<span style="
+                    color:#ff3b3b;
+                    font-weight:bold;
+                    text-shadow:0 0 6px rgba(255,50,50,.8);
+                ">[NEW]</span> ${short}`;
+                    } else {
+                        a.innerHTML = short;
+                    }
+
+                    a.title = t.id;
+                    li.appendChild(a);
+                    li.classList.add("px-2", "w-100");
+                    li.addEventListener("click", () => { tokenSelect(t.id); });
+                    tokenList.appendChild(li);
+                });
+
+                debugLog("setup() finished rendering");
+            } catch (err) {
+                console.error("[ERR] setup error:", err);
+            }
+        };
+
+
+        function shortenToken(t) {
+            if (!t) return "";
+            if (t.length <= 25) return t; // kalau token sangat pendek
+
+            const start = t.substring(0, 10);       // ambil 10 depan
+            const end = t.substring(t.length - 6);  // ambil 6 belakang
+            return `${start}...${end}`;
+        }
+        window.tokenSelect = async function (id) {
+            document.querySelector("#token-input").value = id;
+
+            let subs = await getSubscriptions(id); // <-- pull from Firestore
+
+            document.querySelectorAll("#subscribe-list button").forEach(btn => {
+                let topic = btn.innerHTML.replace(" &#10003;", "");
+
+                if (subs.includes(topic)) {
+                    btn.classList.remove("btn-primary");
+                    btn.classList.add("btn-success");
+                    btn.innerHTML = topic + " &#10003;";
+                    btn.disabled = true;
+                } else {
+                    btn.classList.add("btn-primary");
+                    btn.classList.remove("btn-success");
+                    btn.innerHTML = topic;
+                    btn.disabled = false;
+                }
             });
+        };
 
-            // SORT ikut created (latest atas)
-            tokens.sort((a, b) => b.created - a.created);
-            const latestCreated = tokens[0]?.created ?? 0;
 
-            // Return hanya ID untuk dropdown
-            // return tokens.map(t => t.id);
+        import { doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js";
 
-            return tokens
+        async function getSubscriptions(token) {
+            const ref = doc(db, "subscriptions", token);
+            const snap = await getDoc(ref);
+
+            if (!snap.exists()) return [];
+
+            const topics = snap.data().topics || [];
+
+            // keep local copy updated
+            await localforage.setItem("SubscribedMachines", topics);
+
+            return topics;
         }
 
 
-        let setup = async () => {
-            const data = await getSubList();
-            const tokens = await getTokenList();
+        async function addSubscription(token, topic) {
+            const ref = doc(db, "subscriptions", token);
+            const snap = await getDoc(ref);
 
-            let list = document.querySelector("#subscribe-list");
-            list.style.display = "flex";
+            let arr = [];
+            if (snap.exists()) {
+                arr = snap.data().topics || [];
+            }
 
-            if (data) {
-                const server = data.server;
-                data.subscriptions.forEach(
-                    (topic) => {
-                        let div = document.createElement("div");
-                        let btn = document.createElement("button");
-                        btn.classList.add("btn");
-                        div.classList.add("col-md-4");
-                        div.classList.add("col-12");
-                        div.classList.add("p-1");
-                        btn.classList.add("p-3");
-                        btn.classList.add("btn-primary");
-                        btn.classList.add("w-100");
-                        btn.innerText = topic;
+            // avoid duplicates
+            if (!arr.includes(topic)) arr.push(topic);
 
-                        btn.addEventListener(
-                            "click", async () => {
-                                let res = await subToTopic(server, topic);
-                            }
-                        );
+            await setDoc(ref, { topics: arr }, { merge: true });
+            // -----------------------------------------
+            // NEW: sync to localforage for offline use
+            // -----------------------------------------
+            let localSubs = await localforage.getItem("SubscribedMachines") || [];
 
-                        div.appendChild(btn);
-
-                        list.appendChild(div);
-                    }
-                )
-
-                if (tokens.length > 0) {
-                    let tokenList = document.querySelector("#tokens");
-
-                    tokenList.innerHTML = "";
-
-                    document.querySelector("#selector").removeAttribute("disabled");
-
-                    const latestCreated = tokens[0]?.created ?? 0;
-
-                    tokens.forEach(t => {
-    let li = document.createElement("li");
-    let a = document.createElement("button");
-
-    a.classList.add("dropdown-item", "text-truncate");
-
-    // NEW?
-    const isNew = t.created === latestCreated;
-
-    // SHORT DISPLAY ONLY
-    const short = shortenToken(t.id);
-
-    // UI LABEL
-    if (isNew) {
-        a.innerHTML = `<span style="
-            color:#ff3b3b;
-            font-weight:bold;
-            text-shadow:0 0 6px rgba(255,50,50,.8);
-        ">[NEW]</span> ${short}`;
-    } else {
-        a.innerHTML = short;
-    }
-
-    // Tooltip hover show full token
-    a.title = t.id;
-
-    li.appendChild(a);
-    li.classList.add("px-2", "w-100");
-
-    li.addEventListener("click", () => {
-        tokenSelect(t.id); // still send FULL token
-    });
-
-    tokenList.appendChild(li);
-});
-
-
-
-                }
+            if (!localSubs.includes(topic)) {
+                localSubs.push(topic);
+                await localforage.setItem("SubscribedMachines", localSubs);
             }
         }
 
-        let tokenSelect = (val) => {
-            let input = document.querySelector("#token-input");
-            input.value = val;
-        }
-function shortenToken(t) {
-    if (!t) return "";
-    if (t.length <= 25) return t; // kalau token sangat pendek
-
-    const start = t.substring(0, 10);       // ambil 10 depan
-    const end = t.substring(t.length - 6);  // ambil 6 belakang
-    return `${start}...${end}`;
-}
 
         setup();
     </script>
