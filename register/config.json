@@ -1,11 +1,11 @@
 {
     "server": "https://192.168.68.5",
     "subscriptions": [
-        "AMA",
+        "AMA1",
         "BRA",
         "MOT",
-        "BTP",
+        "AMA2",
         "FRA",
-        "GROUP 3"
+        "UNKNOWN"
     ]
 }
