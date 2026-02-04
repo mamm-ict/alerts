@@ -6,6 +6,7 @@
         "MOT",
         "AMA2",
         "FRA",
-        "UNKNOWN"
+        "UNKNOWN",
+        "TEST"
     ]
 }

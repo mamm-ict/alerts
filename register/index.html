@@ -2,20 +2,17 @@
 <html lang="en">
 
 <head>
+    <meta charset="UTF-8">
     <title>MAMM Alert Registration Manager</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/x-icon" href="/web/favicon.ico">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <script type="module">
-        // Import the functions you need from the SDKs you need
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js";
-        import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-analytics.js";
-        // TODO: Add SDKs for Firebase products that you want to use
-        // https://firebase.google.com/docs/web/setup#available-libraries
-        import { getFirestore, collection, getDocs } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js";
 
-        // Your web app's Firebase configuration
-        // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js";
+        import { getFirestore, collection, getDocs, doc, setDoc, getDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js";
+
+        // ---------------- Firebase ----------------
         const firebaseConfig = {
             apiKey: "AIzaSyArrnKp3JfRV9HfdkGsfwIbu57YvsRStew",
             authDomain: "mamm-alerts.firebaseapp.com",
@@ -25,204 +22,201 @@
             appId: "1:812376016079:web:62e9c74cba6c13ac47a3ba",
             measurementId: "G-FZH66DH45K"
         };
-
-        // Initialize Firebase
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        let subToTopic = async (server, topic) => {
-            let token = document.querySelector("#token-input").value;
+        // ---------------- Helpers ----------------
+        const shortenToken = t => t.length <= 25 ? t : t.substring(0, 10) + "..." + t.slice(-6);
+        const tokenInput = document.querySelector("#token-input");
 
-            if (!token || token.length < 128) {
-                alert("Please enter a valid notification token.");
-                return;
+        // ---------------- Date Parsing ----------------
+        function parseDate(str) {
+            if (!str) return new Date();
+            if (typeof str === "number") return new Date(str);
+            if (typeof str === "string") {
+                const iso = new Date(str);
+                if (!isNaN(iso.getTime())) return iso;
+                const m = str.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})[ ,]+(\d{1,2}):(\d{2}):(\d{2})/);
+                if (m) {
+                    const [_, dd, mm, yyyy, hh, min, ss] = m.map((v, i) => i > 0 ? +v : v);
+                    return new Date(yyyy, mm - 1, dd, hh, min, ss);
+                }
             }
+            return new Date();
+        }
 
-            console.log(server + "/subscribe");
-            console.log(JSON.stringify({
-                "token": token,
-                "topic": topic,
-            }));
+        // ---------------- Token Handling ----------------
+        async function getTokenList() {
+            const snapshot = await getDocs(collection(db, "tokens"));
+            const tokens = snapshot.docs.map(docSnap => {
+                const data = docSnap.data();
+                const date = parseDate(data.created);
+                return { id: docSnap.id, ts: date.getTime(), displayStr: formatDate(date) };
+            });
+            tokens.sort((a, b) => b.ts - a.ts);
+            return tokens;
+        }
 
-            let res = await fetch(server + "/subscribe", {
-                "method": "POST",
-                "body": JSON.stringify({
-                    "token": token,
-                    "topic": topic,
-                }),
-                "mode": "cors"
+        function formatDate(date) {
+            const pad = n => n.toString().padStart(2, "0");
+            return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+        }
+
+        // ---------------- Subscription Handling ----------------
+        async function getSubscriptions(token) {
+            if (!token) return [];
+            const tokenDoc = await getDoc(doc(db, "tokens", token));
+            return tokenDoc.exists() ? tokenDoc.data().subscriptions || [] : [];
+        }
+
+        async function subToTopic(server, topic) {
+            const token = tokenInput.value;
+            if (!token || token.length < 128) { alert("Please enter a valid token"); return false; }
+
+            const ok = confirm(`Subscribe token to "${topic}"?`);
+            if (!ok) return false;
+
+            const res = await fetch(server + "/subscribe", {
+                method: "POST",
+                body: JSON.stringify({ token, topic }),
+                mode: "cors"
             });
 
-            if (res.status == 200) {
-                alert("Subscribed to " + topic);
+            if (res.status === 200) {
+                await setDoc(doc(db, "tokens", token), {
+                    subscriptions: arrayUnion(topic)
+                }, { merge: true });
+                return true;
             } else {
                 alert("Failed to subscribe");
+                return false;
             }
-
-            return res.status == 200;
         }
 
-        let getSubList = async () => {
-            let res = await fetch("config.json");
-            let json = {};
+        async function toggleSubscription(token, topic, btn, server) {
+            if (!token || token.length < 128) return;
 
-            if (res.ok) {
-                json = await res.json();
-            }
+            const subs = await getSubscriptions(token);
+            const isSubscribed = subs.includes(topic);
 
-            return json;
-        }
+            const ok = confirm(isSubscribed ?
+                `Unsubscribe token from "${topic}"?` :
+                `Subscribe token to "${topic}"?`
+            );
+            if (!ok) return;
 
-        let getTokenList = async () => {
-            let res = await getDocs(collection(db, "tokens"));
-            console.log(res);
-
-            // Converter untuk apa saja format created yang pelik
-            const convertCreated = (val) => {
-                if (!val) return 0;
-
-                // already timestamp number
-                if (typeof val === "number") return val;
-
-                // Firestore Timestamp
-                if (val?.toMillis) return val.toMillis();
-
-                // ISO / normal date string
-                const p = Date.parse(val);
-                if (!isNaN(p)) return p;
-
-                // fallback untuk local format pelik (example: 12/10/2025, 10:40 PM)
-                const parts = val.split(/[\s/,:]+/);
-                if (parts.length >= 3) {
-                    let [d, m, y] = parts.map(Number);
-                    if (y < 100) y += 2000;
-                    return new Date(y, m - 1, d).getTime();
-                }
-
-                return 0; // last fallback
-            };
-
-            let tokens = [];
-
-            res.forEach((doc) => {
-                const data = doc.data();
-                tokens.push({
-                    id: doc.id,
-                    created: convertCreated(data.created)
+           if (isSubscribed) {
+    // Call backend unsubscribe
+    const res = await fetch(server + "/unsubscribe", {
+        method: "POST",
+        body: JSON.stringify({ token, topic }),
+        mode: "cors"
+    });
+    if (res.status === 200) {
+        await setDoc(doc(db, "tokens", token), { subscriptions: subs.filter(t => t !== topic) }, { merge: true });
+        btn.classList.remove("btn-success");
+        btn.classList.add("btn-primary");
+        btn.innerText = topic;
+    } else {
+        alert("Failed to unsubscribe");
+    }
+} 
+ else {
+                // Subscribe
+                const res = await fetch(server + "/subscribe", {
+                    method: "POST",
+                    body: JSON.stringify({ token, topic }),
+                    mode: "cors"
                 });
-            });
-
-            // SORT ikut created (latest atas)
-            tokens.sort((a, b) => b.created - a.created);
-            const latestCreated = tokens[0]?.created ?? 0;
-
-            // Return hanya ID untuk dropdown
-            // return tokens.map(t => t.id);
-
-            return tokens
+                if (res.status === 200) {
+                    await setDoc(doc(db, "tokens", token), { subscriptions: arrayUnion(topic) }, { merge: true });
+                    btn.classList.remove("btn-primary");
+                    btn.classList.add("btn-success");
+                    btn.innerText = `${topic} ✓`;
+                    btn.disabled = false; // leave enabled for toggle
+                } else {
+                    alert("Failed to subscribe");
+                }
+            }
         }
 
-
-        let setup = async () => {
-            const data = await getSubList();
-            const tokens = await getTokenList();
-
-            let list = document.querySelector("#subscribe-list");
+        async function renderSubscriptions(token, data) {
+            const list = document.querySelector("#subscribe-list");
+            list.innerHTML = "";
             list.style.display = "flex";
 
-            if (data) {
-                const server = data.server;
-                data.subscriptions.forEach(
-                    (topic) => {
-                        let div = document.createElement("div");
-                        let btn = document.createElement("button");
-                        btn.classList.add("btn");
-                        div.classList.add("col-md-4");
-                        div.classList.add("col-12");
-                        div.classList.add("p-1");
-                        btn.classList.add("p-3");
-                        btn.classList.add("btn-primary");
-                        btn.classList.add("w-100");
-                        btn.innerText = topic;
+            const subs = await getSubscriptions(token);
 
-                        btn.addEventListener(
-                            "click", async () => {
-                                let res = await subToTopic(server, topic);
-                            }
-                        );
+            data.subscriptions.forEach(topic => {
+                const div = document.createElement("div");
+                div.classList.add("col-md-4", "col-12", "p-1");
 
-                        div.appendChild(btn);
+                const btn = document.createElement("button");
+                btn.classList.add("btn", "p-3", "w-100");
 
-                        list.appendChild(div);
-                    }
-                )
-
-                if (tokens.length > 0) {
-                    let tokenList = document.querySelector("#tokens");
-
-                    tokenList.innerHTML = "";
-
-                    document.querySelector("#selector").removeAttribute("disabled");
-
-                    const latestCreated = tokens[0]?.created ?? 0;
-
-                    tokens.forEach(t => {
-    let li = document.createElement("li");
-    let a = document.createElement("button");
-
-    a.classList.add("dropdown-item", "text-truncate");
-
-    // NEW?
-    const isNew = t.created === latestCreated;
-
-    // SHORT DISPLAY ONLY
-    const short = shortenToken(t.id);
-
-    // UI LABEL
-    if (isNew) {
-        a.innerHTML = `<span style="
-            color:#ff3b3b;
-            font-weight:bold;
-            text-shadow:0 0 6px rgba(255,50,50,.8);
-        ">[NEW]</span> ${short}`;
-    } else {
-        a.innerHTML = short;
-    }
-
-    // Tooltip hover show full token
-    a.title = t.id;
-
-    li.appendChild(a);
-    li.classList.add("px-2", "w-100");
-
-    li.addEventListener("click", () => {
-        tokenSelect(t.id); // still send FULL token
-    });
-
-    tokenList.appendChild(li);
-});
-
-
-
+                if (subs.includes(topic)) {
+                    btn.classList.add("btn-success");
+                    btn.innerText = `${topic} ✓`;
+                } else {
+                    btn.classList.add("btn-primary");
+                    btn.innerText = topic;
                 }
-            }
+
+                btn.addEventListener("click", () => toggleSubscription(token, topic, btn, data.server));
+
+                div.appendChild(btn);
+                list.appendChild(div);
+            });
         }
 
-        let tokenSelect = (val) => {
-            let input = document.querySelector("#token-input");
-            input.value = val;
+
+        // ---------------- Setup ----------------
+        async function setup() {
+            const data = await fetch("config.json").then(r => r.ok ? r.json() : {});
+            const tokens = await getTokenList();
+
+            const tokenList = document.querySelector("#tokens");
+            tokenList.innerHTML = "";
+            const selector = document.querySelector("#selector");
+            selector.removeAttribute("disabled");
+
+            tokens.forEach((t, index) => {
+                const li = document.createElement("li");
+                const btn = document.createElement("button");
+                btn.classList.add("dropdown-item", "text-truncate");
+                btn.title = t.id;
+                btn.innerHTML = `${shortenToken(t.id)} (${t.displayStr})`;
+
+                if (index === 0) {
+                    const badge = document.createElement("span");
+                    badge.classList.add("badge", "bg-success", "ms-1");
+                    badge.style.fontSize = "0.65rem";
+                    badge.innerText = "NEW";
+                    btn.appendChild(badge);
+                }
+                
+                btn.addEventListener("click", () => {
+                    tokenInput.value = t.id;
+                    renderSubscriptions(t.id, data);
+                });
+
+                li.appendChild(btn);
+                li.classList.add("px-2", "w-100");
+                tokenList.appendChild(li);
+            });
         }
-function shortenToken(t) {
-    if (!t) return "";
-    if (t.length <= 25) return t; // kalau token sangat pendek
 
-    const start = t.substring(0, 10);       // ambil 10 depan
-    const end = t.substring(t.length - 6);  // ambil 6 belakang
-    return `${start}...${end}`;
-}
+        // ---------------- Clear Button ----------------
+        document.addEventListener("DOMContentLoaded", () => {
+            document.querySelector("#clear-button").addEventListener("click", () => {
+                tokenInput.value = "";
+                document.querySelector("#subscribe-list").innerHTML = "";
+            });
+            setup();
+        });
 
-        setup();
     </script>
+
     <style>
         * {
             box-sizing: border-box;
@@ -232,15 +226,13 @@ function shortenToken(t) {
             min-height: 100vh;
         }
 
-        #sub-list {
-            margin-top: 20px;
-        }
-
         #tokens {
             max-height: 200px;
-            /* cukup untuk 5 item */
             overflow-y: auto;
-            /* enable scroll */
+        }
+
+        #subscribe-list {
+            margin-top: 20px;
         }
     </style>
 </head>
@@ -252,31 +244,20 @@ function shortenToken(t) {
         <div class="input-group mb-3 d-flex flex-column justify-content-between gap-2">
             <div class="dropdown">
                 <button id="selector" class="btn btn-secondary dropdown-toggle w-100" type="button"
-                    data-bs-toggle="dropdown" aria-expanded="false" disabled>
-                    Select Token
-                </button>
-                <ul class="dropdown-menu w-100" id="tokens">
-                    <!-- TOKEN LIST GOES HERE -->
-
-                </ul>
+                    data-bs-toggle="dropdown" disabled>Select Token</button>
+                <ul class="dropdown-menu w-100" id="tokens"></ul>
             </div>
             <div class="d-flex justify-content-between gap-1">
                 <input type="text" id="token-input" class="form-control w-100 rounded"
-                    placeholder="Enter Notification Token" aria-label="Enter Notification Token">
+                    placeholder="Enter Notification Token">
                 <button class="btn btn-danger flex-shrink-1" id="clear-button">CLEAR</button>
             </div>
         </div>
 
         <div id="subscribe-list" class="d-flex flex-wrap"></div>
     </div>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
-        integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI"
-        crossorigin="anonymous"></script>
-    <script>
-        document.querySelector("#clear-button").addEventListener("click", () => {
-            document.querySelector("#token-input").value = "";
-        });
-    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 
 </html>

@@ -8,16 +8,11 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="./localforage.min.js"></script>
     <script type="module">
-        // Import the functions you need from the SDKs you need
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js";
         import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-analytics.js";
-        // TODO: Add SDKs for Firebase products that you want to use
-        // https://firebase.google.com/docs/web/setup#available-libraries
         import { getMessaging, getToken, onMessage } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-messaging.js";
         import { getFirestore, setDoc, doc } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js";
 
-        // Your web app's Firebase configuration
-        // For Firebase JS SDK v7.20.0 and later, measurementId is optional
         const firebaseConfig = {
             apiKey: "AIzaSyArrnKp3JfRV9HfdkGsfwIbu57YvsRStew",
             authDomain: "mamm-alerts.firebaseapp.com",
@@ -28,178 +23,112 @@
             measurementId: "G-FZH66DH45K"
         };
 
-        // Initialize Firebase
         const app = initializeApp(firebaseConfig);
         const analytics = getAnalytics(app);
         const messaging = getMessaging(app);
         const db = getFirestore(app);
 
         let token = "";
-        let server = "";
 
-        let requestNotiPerms = async () => {
-            if (Notification.permission === "granted") {
-                return true;
-            }
-
+        const requestNotiPerms = async () => {
+            if (Notification.permission === "granted") return true;
             let result = await Notification.requestPermission();
+            if (result === "granted") location.reload();
+            return result === "granted";
+        };
 
-            if (result === "granted") {
-                location.reload();
-            } else {
-                return false;
-            }
-        }
-
-        let setupWorker = async () => {
+        const setupWorker = async () => {
             if ("serviceWorker" in navigator) {
-                let worker = await navigator.serviceWorker.register("firebase-messaging-sw.js");
-
-                return worker;
-            } else {
-                return null;
+                return await navigator.serviceWorker.register("firebase-messaging-sw.js");
             }
-        }
+            return null;
+        };
 
-        // function 
-        let setupFCM = async (worker) => {
-            let id = await getToken(
-                messaging,
-                {
-                    vapidKey: "BG4Yi5F1PprifQOyJtjTD1ShsoynoTbmsBpR-HAu20F0hPSTHZtQx89jipGswWSW6zJAWpUcaldQdHxGLcjsqSg",
-                    serviceWorkerRegistration: worker,
-                }
-            );
-
-            onMessage(messaging, (payload) => {
-                console.log(
-                    'Received message ',
-                    payload
-                );
-
-                // Customize notification here
-                const notificationTitle = payload.data["title"];
-
-                let notificationIcon = '';
-                if(payload.data["type"].toLowerCase() == "up"){
-                    notificationIcon = 'web/good.png' ;
-                }
-                else{
-                    notificationIcon = 'web/failure.png';
-                }
-                console.log(payload.data["type"]);
-
-                const notificationOptions = {
-                    body: payload.data["body"],
-                    icon: notificationIcon,
-                    data: {
-                        url: "../history"
-                    }
-                };
-
-                worker.showNotification(notificationTitle, notificationOptions);
-                console.log(payload.data)
-                localforage.setItem("Information-History", payload.data);
-
+        const setupFCM = async (worker) => {
+            token = await getToken(messaging, {
+                vapidKey: "BG4Yi5F1PprifQOyJtjTD1ShsoynoTbmsBpR-HAu20F0hPSTHZtQx89jipGswWSW6zJAWpUcaldQdHxGLcjsqSg",
+                serviceWorkerRegistration: worker,
             });
 
+            // On receiving foreground messages
+            onMessage(messaging, (payload) => {
+                console.log("Received message", payload);
+
+                // Prepare notification
+                const title = payload.data?.title || "Notification";
+                const type = (payload.data?.type || "").toLowerCase();
+                const icon = type === "up" ? "web/good.png" : "web/failure.png";
+
+                const options = {
+                    body: payload.data?.body || "",
+                    icon,
+                    data: { url: "../history" }
+                };
+
+                // Show notification
+                worker.showNotification(title, options);
+
+                // Save payload to localforage
+                localforage.setItem("Information-History", payload.data);
+            });
+
+            // Handle notification click
             worker.addEventListener('notificationclick', (event) => {
                 event.notification.close();
-
-                // Check existing tab to focus on
                 event.waitUntil(
-                    clients
-                        // https://developer.mozilla.org/en-US/docs/Web/API/Clients/matchAll
-                        .matchAll({ type: 'window', includeUncontrolled: true })
-                        .then(function (clientList) {
-                            const url = event.notification.data.url;
-
+                    clients.matchAll({ type: 'window', includeUncontrolled: true })
+                        .then(clientList => {
+                            const url = event.notification.data?.url;
                             if (!url) return;
-
-                            // Focus on existing tab
                             for (const client of clientList) {
-                                if (client.url.includes(url) && 'focus' in client) {
-                                    return client.focus();
-                                }
+                                if (client.url.includes(url) && 'focus' in client) return client.focus();
                             }
-
-                            if (clients.openWindow) {
-                                return clients.openWindow(url);
-                            }
+                            if (clients.openWindow) return clients.openWindow(url);
                         })
                 );
             });
 
-            return id;
-        }
+            return token;
+        };
 
-        let setup = async () => {
-            let allowed = await requestNotiPerms();
-
-            if (allowed) {
-
-                let worker = await setupWorker();
-
-                if (worker != null) {
-                    token = await setupFCM(worker);
-                    console.log(token);
-                }
-
-                let data = {};
-
-                if (token) {
-                    document.querySelector("#prompt").style.display = "none";
-                    document.querySelector("#notification-id").value = token;
-                    document.querySelector("#copy-button").removeAttribute("disabled");
-                    document.querySelector("#save-button").addEventListener(
-                        "click", () => saveToDB(token)
-                    );
-                    document.querySelector("#save-button").removeAttribute("disabled");
-                }
-            }
-        }
-
-        let saveToDB = async (token) => {
+        const saveToDB = async (token) => {
             await setDoc(doc(db, "tokens", token), {
-                created: new Date().toLocaleString()
-            })
-
-            alert('Notification ID saved!');
+                created: Date.now() // ✅ save as number UTC
+            });
+            alert("Notification ID saved!");
             document.querySelector("#save-button").setAttribute("disabled", true);
+        };
+
+        const setup = async () => {
+            const allowed = await requestNotiPerms();
+            if (!allowed) return;
+
+            const worker = await setupWorker();
+            if (!worker) return;
+
+            token = await setupFCM(worker);
+
+            if (token) {
+                document.querySelector("#prompt").style.display = "none";
+                document.querySelector("#notification-id").value = token;
+                document.querySelector("#copy-button").removeAttribute("disabled");
+                document.querySelector("#save-button").removeAttribute("disabled");
+                document.querySelector("#save-button").addEventListener("click", () => saveToDB(token));
+            }
         };
 
         setup();
     </script>
     <style>
-        * {
-            box-sizing: border-box;
-        }
-
-        html,
-        body {
-            width: 100%;
-            height: 100%;
-            margin: 0px;
-        }
-
-        #prompt {
-            width: 100%;
-            height: 100%;
-            padding: 16px;
-            position: fixed;
-            background-color: #ffffff;
-            inset: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 9999;
-        }
+        * { box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; margin: 0; }
+        #prompt { width: 100%; height: 100%; position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #fff; z-index: 9999; }
     </style>
 </head>
 
 <body class="bg-light d-flex justify-content-center align-items-center">
     <div id="prompt">
-        <div class="spinner-border text-primary" role="status" style="width: 4rem; height: 4rem;">
+        <div class="spinner-border text-primary" style="width:4rem;height:4rem;" role="status">
             <span class="visually-hidden">Loading...</span>
         </div>
     </div>
@@ -208,28 +137,22 @@
         <h4 class="notification-text mb-3">Notification ID</h4>
 
         <div class="d-flex justify-content-between gap-1">
-            <input type="text" id="notification-id" class="form-control text-center mb-3 flex-grow-1"
-            placeholder="Please wait for the token to generate" readonly>
+            <input type="text" id="notification-id" class="form-control text-center mb-3 flex-grow-1" placeholder="Please wait for the token" readonly>
             <button class="btn btn-secondary mb-3 flex-shrink-1" id="copy-button" disabled>Copy</button>
         </div>
 
         <button class="btn btn-primary w-100 mb-3" id="save-button" disabled>Save Token</button>
 
         <p class="text-muted small mb-0">
-            Use your token on the <a target="_blank" rel="noopener noreferrer" href="./register">registration site</a> to complete your setup.
+            Use your token on the <a target="_blank" href="./register">registration site</a> to complete your setup.
         </p>
     </div>
 
     <script>
-        document.getElementById('copy-button').addEventListener('click', async () => {
-            const input = document.getElementById('notification-id');
-
-            try {
-                await navigator.clipboard.writeText(input.value);
-                alert('Notification ID copied to clipboard!');
-            } catch (err) {
-                alert('Failed to copy text.');
-            }
+        document.getElementById("copy-button").addEventListener("click", async () => {
+            const input = document.getElementById("notification-id");
+            try { await navigator.clipboard.writeText(input.value); alert("Copied!"); }
+            catch { alert("Failed to copy"); }
         });
     </script>
 </body>
